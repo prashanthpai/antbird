@@ -26,7 +26,7 @@ func SetupGlusterDiskFile(serverconf *hummingbird.IniFile) (map[string]interface
 		// TODO: Error handling. All the following APIs return int
 		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device] = new(gfapi.Volume)
 		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].Init("localhost", dev.Device)
-		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].SetLogging("/tmp/gluster.log", gfapi.LogDebug)
+		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].SetLogging("", gfapi.LogDebug)
 		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].Mount()
 	}
 
