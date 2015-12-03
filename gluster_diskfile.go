@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"syscall"
 
 	"github.com/kshlm/gogfapi/gfapi"
 	"github.com/openstack/swift/go/hummingbird"
@@ -80,6 +81,18 @@ func (d *GlusterDiskFile) GetMetadata() (map[string]string, error) {
 		metadata, err = ReadMetadata(d.volume, d.dataFile) //PUT, DELETE
 	}
 
+	if err != nil {
+		if err.(syscall.Errno) == syscall.ENODATA {
+			// Generate object metadata
+			metadata, _ = GenerateObjectMetadata(d.file, d.stat)
+			d.PutMetadata(metadata)
+			d.file.Seek(int64(os.SEEK_SET), 0)
+			err = nil
+			// TODO(ppai): Detect and invalidate stale metadata
+			// TODO(ppai): Use io.MultiWriter at the time of sending response body to
+			// avoid reading file twice.
+		}
+	}
 	return metadata, err
 }
 

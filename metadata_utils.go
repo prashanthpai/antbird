@@ -1,8 +1,13 @@
 package antbird
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"strconv"
+	"syscall"
 
 	"github.com/kshlm/gogfapi/gfapi"
 	"github.com/openstack/swift/go/hummingbird"
@@ -41,6 +46,10 @@ func RawReadMetadata(volume *gfapi.Volume, fileNameOrFd interface{}) ([]byte, er
 		// get size of xattr
 		length, err = GetXAttr(volume, fileNameOrFd, metadataName, nil)
 		if err != nil || length <= 0 {
+			if err.(syscall.Errno) == syscall.ENODATA && index == 0 {
+				// xattr does not exist
+				return nil, err
+			}
 			break
 		}
 		// grow buffer to hold xattr
@@ -112,4 +121,18 @@ func RawWriteMetadata(volume *gfapi.Volume, file interface{}, buf []byte) error 
 
 func WriteMetadata(volume *gfapi.Volume, file interface{}, v map[string]string) error {
 	return RawWriteMetadata(volume, file, hummingbird.PickleDumps(v))
+}
+
+func GenerateObjectMetadata(file *gfapi.File, stat os.FileInfo) (map[string]string, error) {
+	ts := float64(float64(stat.ModTime().UnixNano()) / 1000000000)
+	hash := md5.New()
+	io.Copy(hash, file)
+	metadata := map[string]string{
+		"name":           file.Name(),
+		"X-Timestamp":    strconv.FormatFloat(ts, 'f', 5, 64),
+		"Content-Type":   "application/octet-stream",
+		"Content-Length": strconv.FormatInt(stat.Size(), 10),
+		"ETag":           hex.EncodeToString(hash.Sum(nil)),
+	}
+	return metadata, nil
 }
