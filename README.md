@@ -39,3 +39,11 @@ index 7c428be..afb1451 100644
                 os.Exit(-1)
 ```
 As hummingbird is not storage policy aware yet, `GlusterFS volume == Swift device == Swift account`
+
+Debugging
+---------
+It's helpful to see a trace of libgfapi calls made by hummingbird:
+
+~~~
+# ltrace -T -ff -p <pid>
+~~~
