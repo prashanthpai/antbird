@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"syscall"
 
 	"github.com/kshlm/gogfapi/gfapi"
@@ -109,7 +110,13 @@ func (d *GlusterDiskFile) GetMetadata() (map[string]string, error) {
 			d.PutMetadata(metadata)
 			d.file.Seek(int64(os.SEEK_SET), 0)
 			err = nil
-			// TODO: Detect and invalidate stale metadata
+		}
+	} else {
+		// check if file was modified from backend over other interfaces
+		if cL, _ := strconv.ParseInt(metadata["Content-Length"], 10, 64); d.stat.Size() != cL {
+			metadata, _ = GenerateObjectMetadata(d.file, d.stat)
+			d.PutMetadata(metadata)
+			d.file.Seek(int64(os.SEEK_SET), 0)
 		}
 	}
 	return metadata, err
@@ -177,7 +184,6 @@ func (d *GlusterDiskFile) Create(a ...interface{}) (io.Writer, error) {
 	d.tempFileName = d.file.Name()
 
 	//TODO: Do fallocate and return 507 on ENOSPC
-
 	return d.file, nil
 }
 
