@@ -1,8 +1,10 @@
 package antbird
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"log/syslog"
 	"net/http"
 	"os"
 	"path"
@@ -14,7 +16,7 @@ import (
 )
 
 // Get a list of devices from ring file and virtual mount them using libgfapi
-func SetupGlusterDiskFile(serverconf *hummingbird.IniFile) (map[string]interface{}, error) {
+func SetupGlusterDiskFile(serverconf *hummingbird.IniFile, logger *syslog.Writer) (map[string]interface{}, error) {
 	hashPathPrefix, hashPathSuffix, _ := hummingbird.GetHashPrefixAndSuffix()
 	objRing, _ := hummingbird.GetRing("object", hashPathPrefix, hashPathSuffix)
 	bindPort := int(serverconf.GetInt("app:object-server", "bind_port", 6000))
@@ -23,12 +25,29 @@ func SetupGlusterDiskFile(serverconf *hummingbird.IniFile) (map[string]interface
 	globals := make(map[string]interface{})
 	globals["glusterVolumes"] = make(map[string]*gfapi.Volume)
 
+	var ret int
+	var err error
 	for _, dev := range localDevices {
 		// TODO: Error handling. All the following APIs return int
 		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device] = new(gfapi.Volume)
-		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].Init("localhost", dev.Device)
-		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].SetLogging("", gfapi.LogDebug)
-		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].Mount()
+
+		ret = globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].Init("localhost", dev.Device)
+		if ret < 0 {
+			return nil, errors.New(fmt.Sprintf("Volume %s: Init() failed with ret = %d", dev.Device, ret))
+		}
+
+		ret, err = globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].SetLogging("", gfapi.LogDebug)
+		if ret < 0 {
+			//FIXME: There's a bug in SetLogging: err != nil even when ret = 0
+			return nil, errors.New(fmt.Sprintf("Volume %s: SetLogging() failed with ret = %d, error = %s", dev.Device, ret, err.Error()))
+		}
+
+		ret = globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].Mount()
+		if ret < 0 {
+			return nil, errors.New(fmt.Sprintf("Volume %s: Mount() failed with ret = %d", dev.Device, ret))
+		}
+
+		logger.Info(fmt.Sprintf("GlusterFS volume %s sucessfully virtual mounted.", dev.Device))
 	}
 
 	return globals, nil

@@ -14,7 +14,7 @@ Installation
 
 ```diff
 diff --git a/go/objectserver/main.go b/go/objectserver/main.go
-index 8812376..e938a4d 100644
+index 7c428be..afb1451 100644
 --- a/go/objectserver/main.go
 +++ b/go/objectserver/main.go
 @@ -39,6 +39,7 @@ import (
@@ -32,10 +32,10 @@ index 8812376..e938a4d 100644
 -               return &DefaultDiskFile{}
 +               return &antbird.GlusterDiskFile{}
         }
--       server.DiskFileGlobals, err = SetupDefaultDiskFile(&serverconf)
-+       server.DiskFileGlobals, err = antbird.SetupGlusterDiskFile(&serverconf)
+-       server.DiskFileGlobals, err = SetupDefaultDiskFile(&serverconf, server.logger)
++       server.DiskFileGlobals, err = antbird.SetupGlusterDiskFile(&serverconf, server.logger)
         if err != nil {
+                server.logger.Err(fmt.Sprintf("DiskFile Setup failed: %s", err.Error()))
                 os.Exit(-1)
-        }
 ```
 As hummingbird is not storage policy aware yet, `GlusterFS volume == Swift device == Swift account`
