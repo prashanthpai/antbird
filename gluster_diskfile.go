@@ -36,13 +36,16 @@ func SetupGlusterDiskFile(serverconf *hummingbird.IniFile) (map[string]interface
 
 // The following struct and member fields are implementation specific
 type GlusterDiskFile struct {
-	dataFile        string
-	dataDir         string
-	request         *http.Request
-	vars            map[string]string
-	stat            os.FileInfo
-	file            *gfapi.File
-	volume          *gfapi.Volume
+	dataFile string
+	dataDir  string
+	request  *http.Request
+	vars     map[string]string
+	stat     os.FileInfo
+	file     *gfapi.File
+	volume   *gfapi.Volume
+
+	// PUT
+	tempFileName    string
 	commitSucceeded bool
 }
 
@@ -50,7 +53,6 @@ func (d *GlusterDiskFile) Init(globals map[string]interface{}, request *http.Req
 	d.request = request
 	d.vars = vars
 
-	d.commitSucceeded = false
 	d.volume = globals["glusterVolumes"].(map[string]*gfapi.Volume)[vars["device"]]
 	d.dataFile = "/" + vars["account"] + "/" + vars["container"] + "/" + vars["obj"]
 	d.dataDir = path.Dir(d.dataFile)
@@ -65,10 +67,10 @@ func (d *GlusterDiskFile) GetObjectState() hummingbird.ObjectState {
 	return hummingbird.ObjectNotExists
 }
 
-func (d *GlusterDiskFile) Open(a ...interface{}) (hummingbird.ReadSeekCloser, error) {
-	file, err := d.volume.Open(d.dataFile)
-	d.file = file
-	return file, err
+func (d *GlusterDiskFile) Open(a ...interface{}) (io.ReadSeeker, error) {
+	var err error
+	d.file, err = d.volume.Open(d.dataFile)
+	return d.file, err
 }
 
 func (d *GlusterDiskFile) GetMetadata() (map[string]string, error) {
@@ -88,9 +90,7 @@ func (d *GlusterDiskFile) GetMetadata() (map[string]string, error) {
 			d.PutMetadata(metadata)
 			d.file.Seek(int64(os.SEEK_SET), 0)
 			err = nil
-			// TODO(ppai): Detect and invalidate stale metadata
-			// TODO(ppai): Use io.MultiWriter at the time of sending response body to
-			// avoid reading file twice.
+			// TODO: Detect and invalidate stale metadata
 		}
 	}
 	return metadata, err
@@ -102,18 +102,21 @@ func (d *GlusterDiskFile) PutMetadata(metadata map[string]string) error {
 
 func (d *GlusterDiskFile) Commit(a ...interface{}) error {
 	d.file.Sync()
+
 	err := d.file.Close()
 	if err != nil {
 		hummingbird.GetLogger(d.request).LogError("file.Close() failed: %s", err.Error())
 		return err
 	}
-	err = d.volume.Rename(d.file.Name(), d.dataFile)
+	d.file = nil
+
+	err = d.volume.Rename(d.tempFileName, d.dataFile)
 	if err != nil {
-		hummingbird.GetLogger(d.request).LogError("Error renaming file: %s -> %s", d.file.Name(), d.dataFile)
+		hummingbird.GetLogger(d.request).LogError("Error renaming file: %s -> %s", d.tempFileName, d.dataFile)
 		return err
 	}
-	d.file = nil
 	d.commitSucceeded = true
+
 	return nil
 }
 
@@ -121,17 +124,23 @@ func (d *GlusterDiskFile) Quarrantine(a ...interface{}) error {
 	return nil
 }
 
-func (d *GlusterDiskFile) Cleanup(a ...interface{}) error {
-	if !d.commitSucceeded {
-		if d.file != nil {
-			d.file.Close()
-			d.file = nil
-		}
+func (d *GlusterDiskFile) Close(a ...interface{}) error {
+
+	if d.file != nil {
+		d.file.Close()
+		d.file = nil
 	}
+
+	if !d.commitSucceeded && d.request.Method == "PUT" {
+		// PUT did not finish, delete the incomplete temp file
+		// TODO: Remove empty directories all the way up to parent
+		d.volume.Unlink(d.tempFileName)
+	}
+
 	return nil
 }
 
-func (d *GlusterDiskFile) Create(a ...interface{}) (io.WriteCloser, error) {
+func (d *GlusterDiskFile) Create(a ...interface{}) (io.Writer, error) {
 
 	err := d.volume.MkdirAll(d.dataDir, 0755)
 	if err != nil {
@@ -146,15 +155,16 @@ func (d *GlusterDiskFile) Create(a ...interface{}) (io.WriteCloser, error) {
 		hummingbird.GetLogger(d.request).LogError("Error creating temporary file in %s:%s - %s", d.vars["device"], tempFile, err.Error())
 		return nil, hummingbird.ResponseToReturn{http.StatusInternalServerError}
 	}
+	d.tempFileName = d.file.Name()
 
-	//TODO(ppai): Do fallocate and return 507 on ENOSPC
+	//TODO: Do fallocate and return 507 on ENOSPC
 
 	return d.file, nil
 }
 
 func (d *GlusterDiskFile) Delete(metadata map[string]string) error {
+	//TODO: Remove empty directories all the way up to parent
 	err := d.volume.Unlink(d.dataFile)
-	//TODO(ppai): Remove empty directories all the way up to parent
 	if err != nil {
 		return hummingbird.ResponseToReturn{http.StatusInternalServerError}
 	}
