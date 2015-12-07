@@ -131,6 +131,7 @@ func GenerateObjectMetadata(file *gfapi.File, stat os.FileInfo) (map[string]stri
 	ts := float64(float64(stat.ModTime().UnixNano()) / 1000000000)
 	hash := md5.New()
 	io.Copy(hash, file)
+	file.Seek(int64(os.SEEK_SET), 0)
 	metadata := map[string]string{
 		"name":           file.Name(),
 		"X-Timestamp":    strconv.FormatFloat(ts, 'f', 5, 64),

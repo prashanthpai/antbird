@@ -112,7 +112,6 @@ func (d *GlusterDiskFile) GetMetadata() (map[string]string, error) {
 			// Generate object metadata
 			metadata, _ = GenerateObjectMetadata(d.file, d.stat)
 			d.PutMetadata(metadata)
-			d.file.Seek(int64(os.SEEK_SET), 0)
 			err = nil
 		}
 	} else {
@@ -120,13 +119,24 @@ func (d *GlusterDiskFile) GetMetadata() (map[string]string, error) {
 		if cL, _ := strconv.ParseInt(metadata["Content-Length"], 10, 64); d.stat.Size() != cL {
 			metadata, _ = GenerateObjectMetadata(d.file, d.stat)
 			d.PutMetadata(metadata)
-			d.file.Seek(int64(os.SEEK_SET), 0)
+		} else if val, ok := metadata["X-Object-Sysmeta-PUT-Mtime"]; ok {
+			// File could've been changed with size remaining same
+			ts := float64(float64(d.stat.ModTime().UnixNano()) / 1000000000)
+			if val != strconv.FormatFloat(ts, 'f', 5, 64) {
+				metadata, _ = GenerateObjectMetadata(d.file, d.stat)
+				d.PutMetadata(metadata)
+			}
 		}
 	}
 	return metadata, err
 }
 
 func (d *GlusterDiskFile) PutMetadata(metadata map[string]string) error {
+	stat, err := d.file.Stat()
+	if err == nil {
+		ts := float64(float64(stat.ModTime().UnixNano()) / 1000000000)
+		metadata["X-Object-Sysmeta-PUT-Mtime"] = strconv.FormatFloat(ts, 'f', 5, 64)
+	}
 	return WriteMetadata(d.volume, d.file, metadata)
 }
 

@@ -45,5 +45,5 @@ Debugging
 It's helpful to see a trace of libgfapi calls made by hummingbird:
 
 ~~~
-# ltrace -T -ff -p <pid>
+# ltrace -C -T -ff -e glfs_*@MAIN -p <pid>
 ~~~
