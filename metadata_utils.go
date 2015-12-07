@@ -60,6 +60,10 @@ func RawReadMetadata(volume *gfapi.Volume, fileNameOrFd interface{}) ([]byte, er
 		if _, err := GetXAttr(volume, fileNameOrFd, metadataName, pickledMetadata[offset:]); err != nil {
 			return nil, err
 		}
+		if index == 0 && length < METADATA_CHUNK_SIZE {
+			// all metadata is retrieved as single xattr
+			break
+		}
 		offset += length
 	}
 	return pickledMetadata, nil
