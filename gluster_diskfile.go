@@ -16,6 +16,9 @@ import (
 	"github.com/satori/go.uuid"
 )
 
+const StatusInsufficientStorage int = 507
+const FALLOC_FL_KEEP_SIZE int = 1
+
 // Get a list of devices from ring file and virtual mount them using libgfapi
 func SetupGlusterDiskFile(serverconf *hummingbird.IniFile, logger *syslog.Writer) (map[string]interface{}, error) {
 	hashPathPrefix, hashPathSuffix, _ := hummingbird.GetHashPrefixAndSuffix()
@@ -24,12 +27,12 @@ func SetupGlusterDiskFile(serverconf *hummingbird.IniFile, logger *syslog.Writer
 	localDevices, _ := objRing.LocalDevices(bindPort)
 
 	globals := make(map[string]interface{})
+	globals["disableFallocate"] = serverconf.GetBool("app:object-server", "disable_fallocate", false)
 	globals["glusterVolumes"] = make(map[string]*gfapi.Volume)
 
 	var ret int
 	var err error
 	for _, dev := range localDevices {
-		// TODO: Error handling. All the following APIs return int
 		globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device] = new(gfapi.Volume)
 
 		ret = globals["glusterVolumes"].(map[string]*gfapi.Volume)[dev.Device].Init("localhost", dev.Device)
@@ -65,8 +68,9 @@ type GlusterDiskFile struct {
 	volume   *gfapi.Volume
 
 	// PUT
-	tempFileName    string
-	commitSucceeded bool
+	disableFallocate bool
+	tempFileName     string
+	commitSucceeded  bool
 }
 
 func (d *GlusterDiskFile) Init(globals map[string]interface{}, request *http.Request, vars map[string]string) error {
@@ -170,20 +174,42 @@ func (d *GlusterDiskFile) Create(a ...interface{}) (io.Writer, error) {
 
 	err := d.volume.MkdirAll(d.dataDir, 0755)
 	if err != nil {
-		hummingbird.GetLogger(d.request).LogError("Error creating directory %s:%s - %s", d.vars["device"], d.dataDir, err.Error())
-		return nil, hummingbird.ResponseToReturn{http.StatusInternalServerError}
+		hummingbird.GetLogger(d.request).LogError("Error creating directory %s:%s - %s",
+			d.vars["device"], d.dataDir, err.Error())
+		if err.(syscall.Errno) == syscall.ENOSPC || err.(syscall.Errno) == syscall.EDQUOT {
+			return nil, hummingbird.ResponseToReturn{StatusInsufficientStorage}
+		} else {
+			return nil, hummingbird.ResponseToReturn{http.StatusInternalServerError}
+		}
 	}
 
 	u := uuid.NewV4()
 	tempFile := d.dataDir + "/" + "." + path.Base(d.dataFile) + "." + fmt.Sprintf("%x", u[0:16])
 	d.file, err = d.volume.OpenFile(tempFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
 	if err != nil {
-		hummingbird.GetLogger(d.request).LogError("Error creating temporary file in %s:%s - %s", d.vars["device"], tempFile, err.Error())
-		return nil, hummingbird.ResponseToReturn{http.StatusInternalServerError}
+		hummingbird.GetLogger(d.request).LogError("Error creating temporary file in %s:%s - %s",
+			d.vars["device"], tempFile, err.Error())
+		if err.(syscall.Errno) == syscall.ENOSPC || err.(syscall.Errno) == syscall.EDQUOT {
+			return nil, hummingbird.ResponseToReturn{StatusInsufficientStorage}
+		} else {
+			return nil, hummingbird.ResponseToReturn{http.StatusInternalServerError}
+		}
 	}
 	d.tempFileName = d.file.Name()
 
-	//TODO: Do fallocate and return 507 on ENOSPC
+	if !d.disableFallocate && d.request.ContentLength > 0 {
+		err = d.file.Fallocate(FALLOC_FL_KEEP_SIZE, 0, int64(d.request.ContentLength))
+		if err != nil {
+			hummingbird.GetLogger(d.request).LogError("Fallocate(%d, 0, %d) failed in volume %s - %s",
+				FALLOC_FL_KEEP_SIZE, d.request.ContentLength, d.vars["device"], err.Error())
+			if err.(syscall.Errno) == syscall.ENOSPC || err.(syscall.Errno) == syscall.EDQUOT {
+				return nil, hummingbird.ResponseToReturn{StatusInsufficientStorage}
+			} else {
+				return nil, hummingbird.ResponseToReturn{http.StatusInternalServerError}
+			}
+		}
+	}
+
 	return d.file, nil
 }
 
